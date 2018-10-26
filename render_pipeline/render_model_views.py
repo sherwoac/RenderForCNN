@@ -16,8 +16,13 @@ inputs:
 
 author: hao su, charles r. qi, yangyan li
 '''
+import sys
+sys.path.insert(0, '/home/adam/anaconda3/lib/python3.6/site-packages')
+
 
 import os
+os.environ["NPY_MKL_FORCE_INTEL"] = ""
+
 import bpy
 import sys
 import math

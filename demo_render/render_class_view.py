@@ -30,7 +30,7 @@ view_fout.write(' '.join([args.azimuth, args.elevation, args.tilt, args.distance
 view_fout.close()
 
 try:
-    render_cmd = '%s %s --background --python %s -- %s %s %s %s %s' % (g_blender_executable_path, blank_file, render_code, args.model_file, 'xxx', 'xxx', view_file, temp_dirname)
+    render_cmd = '%s %s -noaudio --background --python %s -- %s %s %s %s %s' % (g_blender_executable_path, blank_file, render_code, args.model_file, 'xxx', 'xxx', view_file, temp_dirname)
     print render_cmd
     os.system(render_cmd)
     imgs = glob.glob(temp_dirname+'/*.png')

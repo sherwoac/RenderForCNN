@@ -13,30 +13,33 @@ import random
 from datetime import datetime
 random.seed(datetime.now())
 
+def render_single_object_multiple_views(object_file_location, viewpoint_samples):
+    for viewpoint_sample in viewpoint_samples:
+        python_cmd = 'python %s -a %s -e %s -t %s -d %s -o %s' % (os.path.join(BASE_DIR, 'render_class_view.py'),
+                                                                  str(viewpoint_sample[0]), str(viewpoint_sample[1]), str(viewpoint_sample[2]), str(viewpoint_sample[3]),
+                                                                  os.path.join(syn_images_output_folder, model_name,
+                                                                               image_name))
+        os.system('%s %s' % (python_cmd, ''))
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR,'../'))
 from global_variables import *
 
-# set debug mode
-debug_mode = 1
 
-if debug_mode:
-    io_redirect = ''
-else:
-    io_redirect = ' > /dev/null 2>&1'
 
 # -------------------------------------------
 # RENDER
 # -------------------------------------------
 
 # set filepath
-syn_images_folder = os.path.join(BASE_DIR, 'demo_images')
-model_name = 'chair001'
-image_name = 'demo_img.png'
-if not os.path.exists(syn_images_folder):
-    os.mkdir(syn_images_folder)
-    os.mkdir(os.path.join(syn_images_folder, model_name))
+syn_images_output_folder = os.path.join(BASE_DIR, 'demo_images')
+model_name = '1bef8891f35535ac2e877e82c90c24d'
+image_name = model_name + '.png'
+if not os.path.exists(syn_images_output_folder):
+    os.mkdir(syn_images_output_folder)
+    os.mkdir(os.path.join(syn_images_output_folder, model_name))
 viewpoint_samples_file = os.path.join(BASE_DIR, 'sample_viewpoints.txt')
 viewpoint_samples = [[float(x) for x in line.rstrip().split(' ')] for line in open(viewpoint_samples_file,'r')]
 
@@ -44,13 +47,13 @@ viewpoint_samples = [[float(x) for x in line.rstrip().split(' ')] for line in op
 v = random.choice(viewpoint_samples)
 print(">> Selected view: ", v)
 python_cmd = 'python %s -a %s -e %s -t %s -d %s -o %s' % (os.path.join(BASE_DIR, 'render_class_view.py'), 
-    str(v[0]), str(v[1]), str(v[2]), str(v[3]), os.path.join(syn_images_folder, model_name, image_name))
+    str(v[0]), str(v[1]), str(v[2]), str(v[3]), os.path.join(syn_images_output_folder, model_name, image_name))
 print(">> Running rendering command: \n \t %s" % (python_cmd))
 os.system('%s %s' % (python_cmd, io_redirect))
 
 # show result
 print(">> Displaying rendered image ...")
-im = Image.open(os.path.join(syn_images_folder, model_name, image_name))
+im = Image.open(os.path.join(syn_images_output_folder, model_name, image_name))
 im.show()
 
 
@@ -65,7 +68,7 @@ syn_images_cropped_folder = os.path.join(BASE_DIR, 'demo_images_cropped')
 truncation_samples_file = os.path.join(BASE_DIR, 'sample_truncations.txt')
 
 # run matlab code
-matlab_cmd = "addpath('%s'); crop_images('%s','%s','%s',1);" % (os.path.join(g_render4cnn_root_folder, 'render_pipeline'), syn_images_folder, syn_images_cropped_folder, truncation_samples_file)
+matlab_cmd = "addpath('%s'); crop_images('%s','%s','%s',1);" % (os.path.join(g_render4cnn_root_folder, 'render_pipeline'), syn_images_output_folder, syn_images_cropped_folder, truncation_samples_file)
 print(">> Starting MATLAB ... to run cropping command: \n \t %s" % matlab_cmd)
 os.system('%s -nodisplay -r "try %s ; catch; end; quit;" %s' % (g_matlab_executable_path, matlab_cmd, io_redirect))
 
@@ -91,3 +94,5 @@ os.system('%s -nodisplay -r "try %s ; catch; end; quit;" %s' % (g_matlab_executa
 print("Displaying background overlaid image ...")
 im = Image.open(os.path.join(syn_images_cropped_bkg_overlaid_folder, model_name, image_name.replace('.png', '.jpg')))
 im.show()
+
+
