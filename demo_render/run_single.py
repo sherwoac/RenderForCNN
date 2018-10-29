@@ -35,12 +35,12 @@ from global_variables import *
 
 # set filepath
 syn_images_output_folder = os.path.join(BASE_DIR, 'demo_images')
-model_name = '1bef8891f35535ac2e877e82c90c24d'
+model_name = 'fe1ec9b9ff75e947d56a18f240de5e54'
 image_name = model_name + '.png'
 if not os.path.exists(syn_images_output_folder):
     os.mkdir(syn_images_output_folder)
     os.mkdir(os.path.join(syn_images_output_folder, model_name))
-viewpoint_samples_file = os.path.join(BASE_DIR, 'sample_viewpoints.txt')
+viewpoint_samples_file = os.path.join('/home/adam/DATA/OUTPUT/viewpoints', 'viewpoints_train_car')
 viewpoint_samples = [[float(x) for x in line.rstrip().split(' ')] for line in open(viewpoint_samples_file,'r')]
 
 # run code
@@ -49,7 +49,7 @@ print(">> Selected view: ", v)
 python_cmd = 'python %s -a %s -e %s -t %s -d %s -o %s' % (os.path.join(BASE_DIR, 'render_class_view.py'), 
     str(v[0]), str(v[1]), str(v[2]), str(v[3]), os.path.join(syn_images_output_folder, model_name, image_name))
 print(">> Running rendering command: \n \t %s" % (python_cmd))
-os.system('%s %s' % (python_cmd, io_redirect))
+os.system('%s %s' % (python_cmd, ''))
 
 # show result
 print(">> Displaying rendered image ...")
