@@ -31,7 +31,7 @@ view_fout.close()
 
 try:
     render_cmd = '%s %s -noaudio --background --python %s -- %s %s %s %s %s' % (g_blender_executable_path, blank_file, render_code, args.model_file, 'xxx', 'xxx', view_file, temp_dirname)
-    print render_cmd
+    print(render_cmd)
     os.system(render_cmd)
     imgs = glob.glob(temp_dirname+'/*.png')
     shutil.move(imgs[0], args.output_img)

@@ -73,7 +73,7 @@ def render_one_category_model_views(shape_list, view_params):
         command = '%s %s --background --python %s -- %s %s %s %s %s > /dev/null 2>&1' % (g_blender_executable_path, g_blank_blend_file_path, os.path.join(BASE_DIR, 'render_model_views.py'), shape_file, shape_synset, shape_md5, tmp.name, os.path.join(g_syn_images_folder, shape_synset, shape_md5))
         commands.append(command)
     print('done (%d commands)!'%(len(commands)))
-    print commands[0]
+    print(commands[0])
 
     print('Rendering, it takes long time...')
     report_step = 100
