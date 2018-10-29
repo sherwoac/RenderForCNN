@@ -194,7 +194,7 @@ for param in view_params:
         light_azimuth_deg = np.random.uniform(g_syn_light_azimuth_degree_lowbound, g_syn_light_azimuth_degree_highbound)
         light_elevation_deg  = np.random.uniform(g_syn_light_elevation_degree_lowbound, g_syn_light_elevation_degree_highbound)
         light_dist = np.random.uniform(light_dist_lowbound, light_dist_highbound)
-        lx, ly, lz = obj_centened_camera_pos(light_dist, light_azimuth_deg, light_elevation_deg)
+        lx, ly, lz = obj_centened_camera_pos(light_dist, light_azimuth_deg+azimuth_deg, light_elevation_deg+elevation_deg)
         bpy.ops.object.lamp_add(type='POINT', view_align = False, location=(lx, ly, lz))
         bpy.data.objects['Point'].data.energy = np.random.normal(g_syn_light_energy_mean, g_syn_light_energy_std)
 

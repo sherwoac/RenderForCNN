@@ -24,5 +24,5 @@ if __name__ == '__main__':
         name = g_shape_names[idx]
         print('%d: %s, %s\n' % (idx, synset, name))
         matlab_cmd = "addpath('%s'); crop_images('%s','%s','%s');" % (BASE_DIR, os.path.join(g_syn_images_folder, synset), os.path.join(g_syn_images_cropped_folder, synset), os.path.join(g_truncation_distribution_folder, name+'.txt'))
-        print matlab_cmd
+        print(matlab_cmd)
         os.system('%s -nodisplay -r "try %s ; catch; end; quit;"' % (g_matlab_executable_path, matlab_cmd))

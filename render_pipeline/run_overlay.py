@@ -23,5 +23,5 @@ if __name__ == '__main__':
         synset = g_shape_synsets[idx]
         print('%d: %s, %s\n' % (idx, synset, g_shape_names[idx]))
         matlab_cmd = "addpath('%s'); overlay_background('%s','%s','%s', '%s', %f);" % (BASE_DIR, os.path.join(g_syn_images_cropped_folder, synset), os.path.join(g_syn_images_bkg_overlaid_folder, synset), g_syn_bkg_filelist, g_syn_bkg_folder, g_syn_cluttered_bkg_ratio)
-        print matlab_cmd
+        print(matlab_cmd)
         os.system('%s -nodisplay -r "try %s ; catch; end; quit;"' % (g_matlab_executable_path, matlab_cmd))
