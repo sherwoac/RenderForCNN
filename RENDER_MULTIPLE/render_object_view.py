@@ -39,8 +39,9 @@ def render_object_views(model_file, view_file, output_dir, file_name):
         temp_dirname = tempfile.mkdtemp()
         render_cmd = '%s %s -noaudio --background --python %s -- %s %s %s %s %s' % (gv.g_blender_executable_path, blank_file, render_code, model_file, file_name, 'xxx', view_file, temp_dirname)
         os.system(render_cmd)
-        imgs = glob.glob(temp_dirname+'/*.png')
-        shutil.move(imgs[0], output_dir)
+        for image in glob.glob(temp_dirname+'/*.png'):
+            shutil.move(image, output_dir)
+
     except:
         print('render failed. render_cmd: %s' % (render_cmd))
 
@@ -63,11 +64,21 @@ def make_demo_renders():
             assert os.path.isfile(example_object_file), "file: {} doesn't exist".format(example_object_file)
             render_object_view(example_object_file, 240.0, 25.0, 0, 2.4, output_folder, hash_dir)
 
-#make_demo_renders()
-model_md5 = 'fe1ec9b9ff75e947d56a18f240de5e54'
-viewpoint_file = 'viewpoints_train_car'
-class_folder = os.path.join(gv.g_shapenet_root_folder, '02958343')
-full_model_file_name = make_model_file_name(class_folder, model_md5)
-full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'viewpoints', viewpoint_file)
-output_folder = os.path.join(gv.g_datasets_folder, 'RENDERS')
-render_object_views(full_model_file_name, full_view_file_name, output_folder, model_md5)
+
+def make_viewpoint_renders(model_viewpoints):
+    viewpoint_file = 'viewpoints_train_car'
+    class_folder = os.path.join(gv.g_shapenet_root_folder, '02958343')
+
+    #full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'VIEWPOINTS', viewpoint_file)
+    full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'VIEWPOINTS', viewpoint_file + '_test')
+    output_folder = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'IMAGES')
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    for model_md5 in model_viewpoints:
+        full_model_file_name = make_model_file_name(class_folder, model_md5)
+        render_object_views(full_model_file_name, full_view_file_name, output_folder, model_md5)
+
+
+models_md5 = ['fe1ec9b9ff75e947d56a18f240de5e54']
+make_viewpoint_renders(models_md5)

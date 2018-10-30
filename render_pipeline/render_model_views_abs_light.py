@@ -28,6 +28,7 @@ import sys
 import math
 import random
 import numpy as np
+import pandas as pd
 
 # Load rendering light parameters
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,151 @@ light_num_highbound = g_syn_light_num_highbound
 light_dist_lowbound = g_syn_light_dist_lowbound
 light_dist_highbound = g_syn_light_dist_highbound
 
+pandas_output_dir = os.path.expanduser('~/DATA/OUTPUT/')
+pandas_output_dir = os.path.join(pandas_output_dir, 'BB8_PASCAL_DATA')
+pandas_output_file_name_prototype = 'pandas_data_frame_{}'
+pandas_output_file_name = pandas_output_file_name_prototype.format('car')
+pandas_output_columns = ['file_name', 'class_name', '2d_bb8', '3d_bb8', 'D', 'gt_camera_pose', 'image']
+
+class PandasOutput:
+    def __init__(self, file_name, columns, fixed_columns):
+        self.df = pd.DataFrame(columns=columns)
+        self.file_name = file_name
+        self.columns = columns
+        self.fixed_columns = fixed_columns
+
+    def add_row(self, list_data):
+        df_this_one = pd.DataFrame([list_data], columns=self.columns)
+        self.df = pd.concat([self.df, df_this_one])
+
+    def __del__(self):
+        # set all the fixed column values
+        for k, v in self.fixed_columns.values():
+            self.df[k] = v
+
+        self.df.to_pickle(self.file_name)
+
+
+def get_transformation_matrix(azimuth, elevation, distance):
+    if distance == 0:
+        return None
+
+    # camera center
+    C = np.zeros((3, 1))
+    C[0] = distance * math.cos(elevation) * math.sin(azimuth)
+    C[1] = -distance * math.cos(elevation) * math.cos(azimuth)
+    C[2] = distance * math.sin(elevation)
+
+    # rotate coordinate system by theta is equal to rotating the model by theta
+    azimuth = -azimuth
+    elevation = - (math.pi / 2 - elevation)
+
+    # rotation matrix
+    Rz = np.array([
+        [math.cos(azimuth), -math.sin(azimuth), 0],
+        [math.sin(azimuth), math.cos(azimuth), 0],
+        [0, 0, 1],
+    ])  # rotation by azimuth
+    Rx = np.array([
+        [1, 0, 0],
+        [0, math.cos(elevation), -math.sin(elevation)],
+        [0, math.sin(elevation), math.cos(elevation)],
+    ])  # rotation by elevation
+    R_rot = np.dot(Rx, Rz)
+    R = np.hstack((R_rot, np.dot(-R_rot, C)))
+    R = np.vstack((R, [0, 0, 0, 1]))
+
+    return R
+
+
+def project_points_3d_to_2d(
+        x3d,
+        azimuth,
+        elevation,
+        distance,
+        focal,
+        theta,
+        principal,
+        viewport,
+        ):
+    R = get_transformation_matrix(azimuth, elevation, distance)
+    if R is None:
+        return []
+
+    # perspective project matrix
+    # however, we set the viewport to 3000, which makes the camera similar to
+    # an affine-camera.
+    # Exploring a real perspective camera can be a future work.
+    M = viewport
+    P = np.array([[M * focal, 0, 0],
+                  [0, M * focal, 0],
+                  [0, 0, -1]]).dot(R[:3, :4])
+
+    # project
+    x3d_ = np.hstack((x3d, np.ones((len(x3d), 1)))).T
+    x2d = np.dot(P, x3d_)
+    x2d[0, :] = x2d[0, :] / x2d[2, :]
+    x2d[1, :] = x2d[1, :] / x2d[2, :]
+    x2d = x2d[0:2, :]
+
+    # rotation matrix 2D
+    R2d = np.array([[math.cos(theta), -math.sin(theta)],
+                    [math.sin(theta), math.cos(theta)]])
+    x2d = np.dot(R2d, x2d).T
+
+    # transform to image coordinate
+    x2d[:, 1] *= -1
+    x2d = x2d + np.repeat(principal[np.newaxis, :], len(x2d), axis=0)
+
+    return x2d
+
+
+def camera_transform_cad_bb8_object(bounding_box, azimuth, elevation, distance, focal, theta, principal, viewport):
+    """ get model i and do camera transform"""
+
+    bb8s = []
+
+    vertices_3d = bounding_box
+    v3dT = np.transpose(vertices_3d)
+    xMin = np.min(v3dT[0])
+    xMax = np.max(v3dT[0])
+    yMin = np.min(v3dT[1])
+    yMax = np.max(v3dT[1])
+    zMin = np.min(v3dT[2])
+    zMax = np.max(v3dT[2])
+
+    # 3D bounding box
+    bb83d = np.empty([8, 3], dtype=np.float)
+    # front
+    bb83d[0] = [xMin, yMin, zMin]
+    bb83d[1] = [xMin, yMin, zMax]
+    bb83d[2] = [xMax, yMin, zMin]
+    bb83d[3] = [xMax, yMin, zMax]
+    # ..and back faces
+    bb83d[4] = [xMin, yMax, zMin]
+    bb83d[5] = [xMin, yMax, zMax]
+    bb83d[6] = [xMax, yMax, zMin]
+    bb83d[7] = [xMax, yMax, zMax]
+
+    bb8_vertices_2d = project_points_3d_to_2d(bb83d, azimuth, elevation, distance, focal, theta, principal, viewport)
+
+    # cube size, Dx, Dy, Dz
+    Dx = xMax - xMin
+    Dy = yMax - yMin
+    Dz = zMax - zMin
+
+    return (bb8_vertices_2d, Dx, Dy, Dz, bb83d)
+
+
+def get_camera_parameters(camera_matrix):
+    principal = camera_matrix[0, 2]
+    # TODO FINISH HERE.
+
+    return
+
+
+def make_pandas_output(azimuth, elevation, distance, bounding_box, camera_matrix, image_file_name):
+    pass
 
 def camPosToQuaternion(cx, cy, cz):
     camDist = math.sqrt(cx * cx + cy * cy + cz * cz)
@@ -177,6 +323,7 @@ bpy.ops.object.delete()
 
 # YOUR CODE START HERE
 
+pandas_output = PandasOutput(pandas_output_file_name, pandas_output_columns, {'val':False})
 for param in view_params:
     azimuth_deg = param[0]
     elevation_deg = param[1]
@@ -215,8 +362,18 @@ for param in view_params:
     camObj.rotation_quaternion[2] = q[2]
     camObj.rotation_quaternion[3] = q[3]
     # ** multiply tilt by -1 to match pascal3d annotations **
-    theta_deg = (-1*theta_deg)%360
+    theta_deg = (-1 * theta_deg) % 360
     syn_image_file = './%s_%s_a%03d_e%03d_t%03d_d%03d.png' % (shape_synset, shape_md5, round(azimuth_deg), round(elevation_deg), round(theta_deg), round(rho))
-    bpy.data.scenes['Scene'].render.filepath = os.path.join(syn_images_folder, syn_image_file)
-    bpy.ops.render.render( write_still=True )
+    render_output_file_name = os.path.join(syn_images_folder, syn_image_file)
+    bpy.data.scenes['Scene'].render.filepath = render_output_file_name
+    bpy.ops.render.render(write_still=True)
+    pandas_output.add_row(make_pandas_output(azimuth_deg,
+                                             elevation_deg,
+                                             rho,
+                                             bpy.data.objects['model_normalized'].bound_box,
+                                             bpy.context.scene.camera.calc_matrix_camera(),
+                                             render_output_file_name))
+
+
+
 
