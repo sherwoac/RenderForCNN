@@ -31,7 +31,6 @@ def render_object_view(model_file, azimuth, elevation, tilt, distance, output_di
 
 
 def render_object_views(model_file, view_file, output_dir, file_name):
-
     blank_file = osp.join(gv.g_blank_blend_file_path)
     render_code = osp.join(gv.g_render4cnn_root_folder, 'render_pipeline/render_model_views_abs_light.py')
 
@@ -39,8 +38,9 @@ def render_object_views(model_file, view_file, output_dir, file_name):
         temp_dirname = tempfile.mkdtemp()
         render_cmd = '%s %s -noaudio --background --python %s -- %s %s %s %s %s' % (gv.g_blender_executable_path, blank_file, render_code, model_file, file_name, 'xxx', view_file, temp_dirname)
         os.system(render_cmd)
-        for image in glob.glob(temp_dirname+'/*.png'):
-            shutil.move(image, output_dir)
+        for image_file_name in glob.glob(temp_dirname + '/*.png'):
+            print("moving: {} to: {}".format(image_file_name, output_dir))
+            shutil.move(image_file_name, output_dir)
 
     except:
         print('render failed. render_cmd: %s' % (render_cmd))

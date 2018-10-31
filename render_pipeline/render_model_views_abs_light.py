@@ -23,12 +23,15 @@ sys.path.insert(0, '/home/adam/anaconda3/lib/python3.6/site-packages')
 import os
 os.environ["NPY_MKL_FORCE_INTEL"] = ""
 
+import numpy as np
 import bpy
 import sys
 import math
 import random
-import numpy as np
+
 import pandas as pd
+import bpy_extras
+from mathutils import Vector, Matrix
 
 # Load rendering light parameters
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +48,7 @@ pandas_output_file_name_prototype = 'pandas_data_frame_{}'
 pandas_output_file_name = pandas_output_file_name_prototype.format('car')
 pandas_output_columns = ['file_name', 'class_name', '2d_bb8', '3d_bb8', 'D', 'gt_camera_pose', 'image']
 
+
 class PandasOutput:
     def __init__(self, file_name, columns, fixed_columns):
         self.df = pd.DataFrame(columns=columns)
@@ -56,134 +60,209 @@ class PandasOutput:
         df_this_one = pd.DataFrame([list_data], columns=self.columns)
         self.df = pd.concat([self.df, df_this_one])
 
-    def __del__(self):
+    def write_file(self):
         # set all the fixed column values
-        for k, v in self.fixed_columns.values():
+        for k, v in self.fixed_columns.items():
             self.df[k] = v
 
         self.df.to_pickle(self.file_name)
 
 
-def get_transformation_matrix(azimuth, elevation, distance):
-    if distance == 0:
-        return None
+#---------------------------------------------------------------
+# 3x4 P matrix from Blender camera
+#---------------------------------------------------------------
 
-    # camera center
-    C = np.zeros((3, 1))
-    C[0] = distance * math.cos(elevation) * math.sin(azimuth)
-    C[1] = -distance * math.cos(elevation) * math.cos(azimuth)
-    C[2] = distance * math.sin(elevation)
-
-    # rotate coordinate system by theta is equal to rotating the model by theta
-    azimuth = -azimuth
-    elevation = - (math.pi / 2 - elevation)
-
-    # rotation matrix
-    Rz = np.array([
-        [math.cos(azimuth), -math.sin(azimuth), 0],
-        [math.sin(azimuth), math.cos(azimuth), 0],
-        [0, 0, 1],
-    ])  # rotation by azimuth
-    Rx = np.array([
-        [1, 0, 0],
-        [0, math.cos(elevation), -math.sin(elevation)],
-        [0, math.sin(elevation), math.cos(elevation)],
-    ])  # rotation by elevation
-    R_rot = np.dot(Rx, Rz)
-    R = np.hstack((R_rot, np.dot(-R_rot, C)))
-    R = np.vstack((R, [0, 0, 0, 1]))
-
-    return R
+# Build intrinsic camera parameters from Blender camera data
+#
+# See notes on this in
+# blender.stackexchange.com/questions/15102/what-is-blenders-camera-projection-matrix-model
+def get_calibration_matrix_K_from_blender(camd):
+    f_in_mm = camd.lens
+    scene = bpy.context.scene
+    resolution_x_in_px = scene.render.resolution_x
+    resolution_y_in_px = scene.render.resolution_y
+    scale = scene.render.resolution_percentage / 100
+    sensor_width_in_mm = camd.sensor_width
+    sensor_height_in_mm = camd.sensor_height
+    pixel_aspect_ratio = scene.render.pixel_aspect_x / scene.render.pixel_aspect_y
+    if (camd.sensor_fit == 'VERTICAL'):
+        # the sensor height is fixed (sensor fit is horizontal),
+        # the sensor width is effectively changed with the pixel aspect ratio
+        s_u = resolution_x_in_px * scale / sensor_width_in_mm / pixel_aspect_ratio
+        s_v = resolution_y_in_px * scale / sensor_height_in_mm
+    else: # 'HORIZONTAL' and 'AUTO'
+        # the sensor width is fixed (sensor fit is horizontal),
+        # the sensor height is effectively changed with the pixel aspect ratio
+        pixel_aspect_ratio = scene.render.pixel_aspect_x / scene.render.pixel_aspect_y
+        s_u = resolution_x_in_px * scale / sensor_width_in_mm
+        s_v = resolution_y_in_px * scale * pixel_aspect_ratio / sensor_height_in_mm
 
 
-def project_points_3d_to_2d(
-        x3d,
-        azimuth,
-        elevation,
-        distance,
-        focal,
-        theta,
-        principal,
-        viewport,
-        ):
-    R = get_transformation_matrix(azimuth, elevation, distance)
-    if R is None:
-        return []
+    # Parameters of intrinsic calibration matrix K
+    alpha_u = f_in_mm * s_u
+    alpha_v = f_in_mm * s_v
+    u_0 = resolution_x_in_px * scale / 2
+    v_0 = resolution_y_in_px * scale / 2
+    skew = 0 # only use rectangular pixels
 
-    # perspective project matrix
-    # however, we set the viewport to 3000, which makes the camera similar to
-    # an affine-camera.
-    # Exploring a real perspective camera can be a future work.
-    M = viewport
-    P = np.array([[M * focal, 0, 0],
-                  [0, M * focal, 0],
-                  [0, 0, -1]]).dot(R[:3, :4])
+    K = Matrix(
+        ((alpha_u, skew,    u_0),
+        (    0  , alpha_v, v_0),
+        (    0  , 0,        1 )))
+    return K
 
-    # project
-    x3d_ = np.hstack((x3d, np.ones((len(x3d), 1)))).T
-    x2d = np.dot(P, x3d_)
-    x2d[0, :] = x2d[0, :] / x2d[2, :]
-    x2d[1, :] = x2d[1, :] / x2d[2, :]
-    x2d = x2d[0:2, :]
+# Returns camera rotation and translation matrices from Blender.
+#
+# There are 3 coordinate systems involved:
+#    1. The World coordinates: "world"
+#       - right-handed
+#    2. The Blender camera coordinates: "bcam"
+#       - x is horizontal
+#       - y is up
+#       - right-handed: negative z look-at direction
+#    3. The desired computer vision camera coordinates: "cv"
+#       - x is horizontal
+#       - y is down (to align to the actual pixel coordinates
+#         used in digital images)
+#       - right-handed: positive z look-at direction
+def get_3x4_RT_matrix_from_blender(cam):
+    # bcam stands for blender camera
+    R_bcam2cv = Matrix(
+        ((1, 0,  0),
+         (0, -1, 0),
+         (0, 0, -1)))
 
-    # rotation matrix 2D
-    R2d = np.array([[math.cos(theta), -math.sin(theta)],
-                    [math.sin(theta), math.cos(theta)]])
-    x2d = np.dot(R2d, x2d).T
+    # Transpose since the rotation is object rotation,
+    # and we want coordinate rotation
+    # R_world2bcam = cam.rotation_euler.to_matrix().transposed()
+    # T_world2bcam = -1*R_world2bcam * location
+    #
+    # Use matrix_world instead to account for all constraints
+    location, rotation = cam.matrix_world.decompose()[0:2]
+    R_world2bcam = rotation.to_matrix().transposed()
 
-    # transform to image coordinate
-    x2d[:, 1] *= -1
-    x2d = x2d + np.repeat(principal[np.newaxis, :], len(x2d), axis=0)
+    # Convert camera location to translation vector used in coordinate changes
+    # T_world2bcam = -1*R_world2bcam*cam.location
+    # Use location from matrix_world to account for constraints:
+    T_world2bcam = -1*R_world2bcam * location
 
-    return x2d
+    # Build the coordinate transform matrix from world to computer vision camera
+    R_world2cv = R_bcam2cv*R_world2bcam
+    T_world2cv = R_bcam2cv*T_world2bcam
 
-
-def camera_transform_cad_bb8_object(bounding_box, azimuth, elevation, distance, focal, theta, principal, viewport):
-    """ get model i and do camera transform"""
-
-    bb8s = []
-
-    vertices_3d = bounding_box
-    v3dT = np.transpose(vertices_3d)
-    xMin = np.min(v3dT[0])
-    xMax = np.max(v3dT[0])
-    yMin = np.min(v3dT[1])
-    yMax = np.max(v3dT[1])
-    zMin = np.min(v3dT[2])
-    zMax = np.max(v3dT[2])
-
-    # 3D bounding box
-    bb83d = np.empty([8, 3], dtype=np.float)
-    # front
-    bb83d[0] = [xMin, yMin, zMin]
-    bb83d[1] = [xMin, yMin, zMax]
-    bb83d[2] = [xMax, yMin, zMin]
-    bb83d[3] = [xMax, yMin, zMax]
-    # ..and back faces
-    bb83d[4] = [xMin, yMax, zMin]
-    bb83d[5] = [xMin, yMax, zMax]
-    bb83d[6] = [xMax, yMax, zMin]
-    bb83d[7] = [xMax, yMax, zMax]
-
-    bb8_vertices_2d = project_points_3d_to_2d(bb83d, azimuth, elevation, distance, focal, theta, principal, viewport)
-
-    # cube size, Dx, Dy, Dz
-    Dx = xMax - xMin
-    Dy = yMax - yMin
-    Dz = zMax - zMin
-
-    return (bb8_vertices_2d, Dx, Dy, Dz, bb83d)
+    # put into 3x4 matrix
+    RT = Matrix((
+        R_world2cv[0][:] + (T_world2cv[0],),
+        R_world2cv[1][:] + (T_world2cv[1],),
+        R_world2cv[2][:] + (T_world2cv[2],)
+         ))
+    return RT
 
 
-def get_camera_parameters(camera_matrix):
-    principal = camera_matrix[0, 2]
-    # TODO FINISH HERE.
+def get_3x4_P_matrix_from_blender(cam):
+    K = get_calibration_matrix_K_from_blender(cam.data)
+    RT = get_3x4_RT_matrix_from_blender(cam)
+    return K*RT, K, RT
 
-    return
+
+# ----------------------------------------------------------
+# Alternate 3D coordinates to 2D pixel coordinate projection code
+# adapted from https://blender.stackexchange.com/questions/882/how-to-find-image-coordinates-of-the-rendered-vertex?lq=1
+# to have the y axes pointing up and origin at the top-left corner
+def project_by_object_utils(cam, point):
+    scene = bpy.context.scene
+    co_2d = bpy_extras.object_utils.world_to_camera_view(scene, cam, point)
+    render_scale = scene.render.resolution_percentage / 100
+    render_size = (
+            int(scene.render.resolution_x * render_scale),
+            int(scene.render.resolution_y * render_scale),
+            )
+    return Vector((co_2d.x * render_size[0], render_size[1] - co_2d.y * render_size[1]))
 
 
-def make_pandas_output(azimuth, elevation, distance, bounding_box, camera_matrix, image_file_name):
-    pass
+def get_rotation_matrix(cam):
+    _, _, RT = get_3x4_P_matrix_from_blender(cam)
+    return RT
+
+
+def world_to_camera(cam, points_3d):
+    #P, K, RT = get_3x4_P_matrix_from_blender(cam)
+    points_2d = []
+    for point_3d in points_3d:
+        points_2d.append(project_by_object_utils(cam, Vector(point_3d[0:3])))
+
+    return points_2d
+
+
+def Vector_to_numpy_array(vector):
+    return np.array([[w for w in v] for v in vector])
+
+
+def camera_coordinate_tests(cam):
+    # Insert your camera name here
+    #cam = bpy.data.objects['Camera.001']
+    P, K, RT = get_3x4_P_matrix_from_blender(cam)
+    print("K")
+    print(K)
+    print("RT")
+    print(RT)
+    print("P")
+    print(P)
+
+    print("==== Tests ====")
+    e1 = Vector((1, 0,    0, 1))
+    e2 = Vector((0, 1,    0, 1))
+    e3 = Vector((0, 0,    1, 1))
+    O  = Vector((0, 0,    0, 1))
+
+    p1 = P * e1
+    p1 /= p1[2]
+    print("Projected e1")
+    print(p1)
+    print("proj by object_utils")
+    print(project_by_object_utils(cam, Vector(e1[0:3])))
+
+    p2 = P * e2
+    p2 /= p2[2]
+    print("Projected e2")
+    print(p2)
+    print("proj by object_utils")
+    print(project_by_object_utils(cam, Vector(e2[0:3])))
+
+    p3 = P * e3
+    p3 /= p3[2]
+    print("Projected e3")
+    print(p3)
+    print("proj by object_utils")
+    print(project_by_object_utils(cam, Vector(e3[0:3])))
+
+    pO = P * O
+    pO /= pO[2]
+    print("Projected world origin")
+    print(pO)
+    print("proj by object_utils")
+    print(project_by_object_utils(cam, Vector(O[0:3])))
+
+
+def make_pandas_output(bounding_box, camera_object, image_file_name, class_name):
+    assert os.path.isfile(image_file_name), "rendered file: {} missing".format(image_file_name)
+
+    bb8_2d = Vector_to_numpy_array(world_to_camera(camera_object, bounding_box))
+    bb8_3d = Vector_to_numpy_array(bounding_box)
+    D = bounding_box_to_dimensions(bounding_box)
+    R_gt = Vector_to_numpy_array(get_rotation_matrix(camera_object))
+    image = bpy.data.images.load(image_file_name)
+    print(dir(image))
+
+    image_array = np.array(image.pixels)
+    image_array = np.reshape(image_array, (image.generated_height, image.generated_width, image.channels))
+    output_list = [image_file_name, class_name, bb8_2d, bb8_3d, D, R_gt, image_array]
+    print(image_array.shape)
+    type_output_list = [type(thing) for thing in output_list]
+
+    print(type_output_list)
+    return output_list
+
 
 def camPosToQuaternion(cx, cy, cz):
     camDist = math.sqrt(cx * cx + cy * cy + cz * cz)
@@ -204,6 +283,7 @@ def camPosToQuaternion(cx, cy, cz):
     q3 = a * d * w2 + b * d * w3
     q4 = -b * d * w2 + a * d * w3
     return (q1, q2, q3, q4)
+
 
 def quaternionFromYawPitchRoll(yaw, pitch, roll):
     c1 = math.cos(yaw / 2.0)
@@ -240,7 +320,7 @@ def camPosToQuaternion(cx, cy, cz):
     roll = math.acos(tmp)
     if cz < 0:
         roll = -roll    
-    print("%f %f %f" % (yaw, pitch, roll))
+
     q2a, q2b, q2c, q2d = quaternionFromYawPitchRoll(yaw, pitch, roll)    
     q1 = q1a * q2a - q1b * q2b - q1c * q2c - q1d * q2d
     q2 = q1b * q2a + q1a * q2b + q1d * q2c - q1c * q2d
@@ -248,7 +328,8 @@ def camPosToQuaternion(cx, cy, cz):
     q4 = q1d * q2a + q1c * q2b - q1b * q2c + q1a * q2d
     return (q1, q2, q3, q4)
 
-def camRotQuaternion(cx, cy, cz, theta): 
+
+def camRotQuaternion(cx, cy, cz, theta):
     theta = theta / 180.0 * math.pi
     camDist = math.sqrt(cx * cx + cy * cy + cz * cz)
     cx = -cx / camDist
@@ -259,6 +340,7 @@ def camRotQuaternion(cx, cy, cz, theta):
     q3 = -cy * math.sin(theta * 0.5)
     q4 = -cz * math.sin(theta * 0.5)
     return (q1, q2, q3, q4)
+
 
 def quaternionProduct(qx, qy): 
     a = qx[0]
@@ -275,7 +357,8 @@ def quaternionProduct(qx, qy):
     q4 = a * h + b * g - c * f + d * e    
     return (q1, q2, q3, q4)
 
-def obj_centened_camera_pos(dist, azimuth_deg, elevation_deg):
+
+def obj_centered_camera_pos(dist, azimuth_deg, elevation_deg):
     phi = float(elevation_deg) / 180 * math.pi
     theta = float(azimuth_deg) / 180 * math.pi
     x = (dist * math.cos(theta) * math.cos(phi))
@@ -283,8 +366,13 @@ def obj_centened_camera_pos(dist, azimuth_deg, elevation_deg):
     z = (dist * math.sin(phi))
     return (x, y, z)
 
-def output_bounding_box(obj):
-    print([v[:] for v in obj.bound_box])
+
+def bounding_box_to_dimensions(bb):
+    bb_np = Vector_to_numpy_array(bb)
+    d_x = np.max(bb_np[:, 0]) - np.min(bb_np[:, 0])
+    d_y = np.max(bb_np[:, 1]) - np.min(bb_np[:, 1])
+    d_z = np.max(bb_np[:, 2]) - np.min(bb_np[:, 2])
+    return (d_x, d_y, d_z)
 
 # Input parameters
 shape_file = sys.argv[-5]
@@ -292,6 +380,7 @@ shape_synset = sys.argv[-4]
 shape_md5 = sys.argv[-3]
 shape_view_params_file = sys.argv[-2]
 syn_images_folder = sys.argv[-1]
+print(sys.argv)
 if not os.path.exists(syn_images_folder):
     os.mkdir(syn_images_folder)
 #syn_images_folder = os.path.join(g_syn_images_folder, shape_synset, shape_md5) 
@@ -301,7 +390,6 @@ if not os.path.exists(syn_images_folder):
     os.makedirs(syn_images_folder)
 
 bpy.ops.import_scene.obj(filepath=shape_file, use_split_groups=False)
-print(output_bounding_box(bpy.data.objects['model_normalized']))
 
 bpy.context.scene.render.alpha_mode = 'TRANSPARENT'
 #bpy.context.scene.render.use_shadows = False
@@ -311,7 +399,7 @@ bpy.data.objects['Lamp'].data.energy = 0
 
 #m.subsurface_scattering.use = True
 
-camObj = bpy.data.objects['Camera']
+camera_object = bpy.data.objects['Camera']
 # camObj.data.lens_unit = 'FOV'
 # camObj.data.angle = 0.2
 
@@ -324,6 +412,7 @@ bpy.ops.object.delete()
 # YOUR CODE START HERE
 
 pandas_output = PandasOutput(pandas_output_file_name, pandas_output_columns, {'val':False})
+
 for param in view_params:
     azimuth_deg = param[0]
     elevation_deg = param[1]
@@ -345,35 +434,34 @@ for param in view_params:
         light_azimuth_deg = np.random.uniform(g_syn_light_azimuth_degree_lowbound, g_syn_light_azimuth_degree_highbound)
         light_elevation_deg  = np.random.uniform(g_syn_light_elevation_degree_lowbound, g_syn_light_elevation_degree_highbound)
         light_dist = np.random.uniform(light_dist_lowbound, light_dist_highbound)
-        lx, ly, lz = obj_centened_camera_pos(light_dist, light_azimuth_deg, light_elevation_deg)
+        lx, ly, lz = obj_centered_camera_pos(light_dist, light_azimuth_deg, light_elevation_deg)
         bpy.ops.object.lamp_add(type='POINT', view_align = False, location=(lx, ly, lz))
         bpy.data.objects['Point'].data.energy = np.random.normal(g_syn_light_energy_mean, g_syn_light_energy_std)
 
-    cx, cy, cz = obj_centened_camera_pos(rho, azimuth_deg, elevation_deg)
+    cx, cy, cz = obj_centered_camera_pos(rho, azimuth_deg, elevation_deg)
     q1 = camPosToQuaternion(cx, cy, cz)
     q2 = camRotQuaternion(cx, cy, cz, theta_deg)
     q = quaternionProduct(q2, q1)
-    camObj.location[0] = cx
-    camObj.location[1] = cy 
-    camObj.location[2] = cz
-    camObj.rotation_mode = 'QUATERNION'
-    camObj.rotation_quaternion[0] = q[0]
-    camObj.rotation_quaternion[1] = q[1]
-    camObj.rotation_quaternion[2] = q[2]
-    camObj.rotation_quaternion[3] = q[3]
+    camera_object.location[0] = cx
+    camera_object.location[1] = cy
+    camera_object.location[2] = cz
+    camera_object.rotation_mode = 'QUATERNION'
+    camera_object.rotation_quaternion[0] = q[0]
+    camera_object.rotation_quaternion[1] = q[1]
+    camera_object.rotation_quaternion[2] = q[2]
+    camera_object.rotation_quaternion[3] = q[3]
+
     # ** multiply tilt by -1 to match pascal3d annotations **
     theta_deg = (-1 * theta_deg) % 360
-    syn_image_file = './%s_%s_a%03d_e%03d_t%03d_d%03d.png' % (shape_synset, shape_md5, round(azimuth_deg), round(elevation_deg), round(theta_deg), round(rho))
+    syn_image_file = '%s_%s_a%03d_e%03d_t%03d_d%03d.png' % (shape_synset, shape_md5, round(azimuth_deg), round(elevation_deg), round(theta_deg), round(rho))
     render_output_file_name = os.path.join(syn_images_folder, syn_image_file)
     bpy.data.scenes['Scene'].render.filepath = render_output_file_name
     bpy.ops.render.render(write_still=True)
-    pandas_output.add_row(make_pandas_output(azimuth_deg,
-                                             elevation_deg,
-                                             rho,
-                                             bpy.data.objects['model_normalized'].bound_box,
-                                             bpy.context.scene.camera.calc_matrix_camera(),
-                                             render_output_file_name))
 
+    print("output file:{}".format(render_output_file_name))
+    pandas_output.add_row(make_pandas_output(bpy.data.objects['model_normalized'].bound_box,
+                                             camera_object,
+                                             render_output_file_name,
+                                             ''))
 
-
-
+pandas_output.write_file()
