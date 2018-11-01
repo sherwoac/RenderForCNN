@@ -42,10 +42,12 @@ light_num_highbound = g_syn_light_num_highbound
 light_dist_lowbound = g_syn_light_dist_lowbound
 light_dist_highbound = g_syn_light_dist_highbound
 
-pandas_output_dir = os.path.expanduser('~/DATA/OUTPUT/')
+pandas_output_dir = os.path.expanduser('~/DATA/')
 pandas_output_dir = os.path.join(pandas_output_dir, 'BB8_PASCAL_DATA')
 pandas_output_file_name_prototype = 'pandas_data_frame_{}'
 pandas_output_file_name = pandas_output_file_name_prototype.format('car')
+pandas_output_full_file_name = os.path.join(pandas_output_dir, pandas_output_file_name)
+pandas_fixed_columns = {'val':False, 'occluded':False, 'truncated':False}
 pandas_output_columns = ['file_name', 'class_name', '2d_bb8', '3d_bb8', 'D', 'gt_camera_pose', 'image']
 
 
@@ -57,6 +59,7 @@ class PandasOutput:
         self.fixed_columns = fixed_columns
 
     def add_row(self, list_data):
+        assert len(list_data) == len(self.columns), "add_row: incorrect list length"
         df_this_one = pd.DataFrame([list_data], columns=self.columns)
         self.df = pd.concat([self.df, df_this_one])
 
@@ -65,7 +68,10 @@ class PandasOutput:
         for k, v in self.fixed_columns.items():
             self.df[k] = v
 
+        assert len(self.df.index) > 0, "empty dataframe"
         self.df.to_pickle(self.file_name)
+        assert os.path.isfile(self.file_name), "pandas output, file: {} not written".format(self.file_name)
+        print("output file name: {}".format(self.file_name))
 
 
 #---------------------------------------------------------------
@@ -252,15 +258,12 @@ def make_pandas_output(bounding_box, camera_object, image_file_name, class_name)
     D = bounding_box_to_dimensions(bounding_box)
     R_gt = Vector_to_numpy_array(get_rotation_matrix(camera_object))
     image = bpy.data.images.load(image_file_name)
-    print(dir(image))
-
     image_array = np.array(image.pixels)
-    image_array = np.reshape(image_array, (image.generated_height, image.generated_width, image.channels))
+    width = image.size[0]
+    height = image.size[1]
+    image_array = np.reshape(image_array, (height, width, image.channels))
     output_list = [image_file_name, class_name, bb8_2d, bb8_3d, D, R_gt, image_array]
-    print(image_array.shape)
-    type_output_list = [type(thing) for thing in output_list]
-
-    print(type_output_list)
+    #print([type(thing) for thing in output_list])
     return output_list
 
 
@@ -411,7 +414,7 @@ bpy.ops.object.delete()
 
 # YOUR CODE START HERE
 
-pandas_output = PandasOutput(pandas_output_file_name, pandas_output_columns, {'val':False})
+pandas_output = PandasOutput(pandas_output_full_file_name, pandas_output_columns, fixed_columns=pandas_fixed_columns)
 
 for param in view_params:
     azimuth_deg = param[0]
@@ -457,7 +460,10 @@ for param in view_params:
     render_output_file_name = os.path.join(syn_images_folder, syn_image_file)
     bpy.data.scenes['Scene'].render.filepath = render_output_file_name
     bpy.ops.render.render(write_still=True)
-
+    # image = bpy.data.images['Render Result']
+    # attribs = dir(image)
+    # print(attribs)
+    # #print([getattr(image, attrib)() for attrib in attribs if type(getattr(image, attrib)) is not NoneType])
     print("output file:{}".format(render_output_file_name))
     pandas_output.add_row(make_pandas_output(bpy.data.objects['model_normalized'].bound_box,
                                              camera_object,

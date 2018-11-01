@@ -69,8 +69,8 @@ def make_viewpoint_renders(model_viewpoints):
     viewpoint_file = 'viewpoints_train_car'
     class_folder = os.path.join(gv.g_shapenet_root_folder, '02958343')
 
-    #full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'VIEWPOINTS', viewpoint_file)
-    full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'VIEWPOINTS', viewpoint_file + '_test')
+    full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'VIEWPOINTS', viewpoint_file)
+    #full_view_file_name = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'VIEWPOINTS', viewpoint_file + '_test')
     output_folder = os.path.join(gv.g_data_folder, 'OUTPUT', 'RENDERS', 'IMAGES')
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
